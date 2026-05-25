@@ -76,6 +76,8 @@ async def play(ctx):
 async def stop(ctx):
     voice_client = ctx.voice_client
     if voice_client and voice_client.is_connected():
+        if voice_client.is_playing():
+            voice_client.stop()
         await voice_client.disconnect()
         await ctx.send("Audio stopped and bot left the channel.")
     else:
