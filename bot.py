@@ -6,12 +6,17 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
-# Dummy web server to keep Render happy
+# Dummy web server to keep Render happy and provide a health check API
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
+        if self.path in ['/', '/health', '/healthz', '/api/health']:
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok", "message": "Bot is running!"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -37,13 +42,15 @@ async def on_ready():
     print('Bot is ready to play audio!')
 
 @bot.command()
-async def play(ctx):
-    # Check if the user is in a voice channel
-    if not ctx.author.voice:
-        await ctx.send("You need to join a voice channel first!")
+async def play(ctx, *, target_channel: discord.VoiceChannel = None):
+    # Use specified channel or author's current channel
+    if target_channel:
+        channel = target_channel
+    elif ctx.author.voice:
+        channel = ctx.author.voice.channel
+    else:
+        await ctx.send("You need to join a voice channel first, or mention one like `!play #channel-name`!")
         return
-
-    channel = ctx.author.voice.channel
 
     # Connect to the voice channel
     try:
@@ -62,32 +69,36 @@ async def play(ctx):
         await voice_client.disconnect()
         return
 
-    # Play the audio file
-    def after_playing(error):
+    if voice_client.is_playing():
+        await ctx.send("Already playing audio.")
+        return
+
+    # Play the audio file infinitely
+    def play_loop(error=None):
         if error:
             print(f"Error during playback: {error}")
             return
             
-        # If the bot is still connected, loop the audio
-        if voice_client.is_connected():
+        if voice_client and voice_client.is_connected():
             try:
-                new_source = discord.FFmpegPCMAudio(audio_file)
-                voice_client.play(new_source, after=after_playing)
+                def play_next():
+                    if voice_client.is_connected():
+                        new_source = discord.FFmpegPCMAudio(audio_file)
+                        voice_client.play(new_source, after=play_loop)
+                
+                bot.loop.call_soon_threadsafe(play_next)
             except Exception as e:
                 print(f"Error looping audio: {e}")
 
-    if not voice_client.is_playing():
-        try:
-            # FFmpeg is required to stream the audio
-            source = discord.FFmpegPCMAudio(audio_file)
-            voice_client.play(source, after=after_playing)
-            await ctx.send(f"🎵 Playing `{audio_file}` in **{channel.name}**")
-        except Exception as e:
-            await ctx.send("Error playing audio. Is FFmpeg installed?")
-            print(e)
-            await voice_client.disconnect()
-    else:
-        await ctx.send("Already playing audio.")
+    try:
+        # Start the first playback
+        source = discord.FFmpegPCMAudio(audio_file)
+        voice_client.play(source, after=play_loop)
+        await ctx.send(f"🎵 Playing `{audio_file}` continuously in **{channel.name}**")
+    except Exception as e:
+        await ctx.send("Error playing audio. Is FFmpeg installed?")
+        print(e)
+        await voice_client.disconnect()
 
 @bot.command()
 async def stop(ctx):
