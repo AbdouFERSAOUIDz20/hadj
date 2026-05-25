@@ -2,7 +2,24 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
+
+# Dummy web server to keep Render happy
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    server.serve_forever()
+
+# Start the background web server thread
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # Load environment variables
 load_dotenv()
